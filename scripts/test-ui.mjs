@@ -20,6 +20,8 @@ try {
   assert.equal(await page.locator('#adminToken').inputValue(), '');
   const statusText = await page.locator('#status').innerText();
   assert.ok(statusText.includes('websiteApiAccess') && statusText.includes('browserAccess') && statusText.includes('website-api'));
+  const storageText = await page.locator('#mediaStorage').innerText();
+  assert.match(storageText, /知乎临时文件/); assert.match(storageText, /共享聊天附件/); assert.match(storageText, /24 小时/); assert.match(storageText, /不自动删除/);
   await page.locator('#botSecret').fill('fixture-public-api-secret'); await page.locator('#saveBot').click();
   await page.waitForFunction(() => document.getElementById('status').textContent.includes('"officialApi": true'));
   assert.equal(await page.locator('#botSecret').inputValue(), '');

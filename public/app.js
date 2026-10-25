@@ -7,7 +7,15 @@ async function api(path, data) {
 async function refresh() {
   clearTimeout(poll);
   const s = await api('/api/status'), web = s.web || {};
-  $('status').textContent = JSON.stringify({ officialApi: s.configured, webAccount: web.account, savedLogin: web.saved, loginState: web.loginState, loginError: web.error, websiteApiAccess: web.apiAccess, browserAccess: web.access, transports: web.transports, voteChecks: web.voteChecks, ownerWatch: s.ownerWatch, activityWatch: s.activityWatch }, null, 2);
+  $('status').textContent = JSON.stringify({ officialApi: s.configured, webAccount: web.account, savedLogin: web.saved, loginState: web.loginState, loginError: web.error, websiteApiAccess: web.apiAccess, browserAccess: web.access, transports: web.transports, voteChecks: web.voteChecks, mediaStorage: web.mediaStorage, ownerWatch: s.ownerWatch, activityWatch: s.activityWatch }, null, 2);
+  const storage = web.mediaStorage;
+  const size = bytes => (Number(bytes || 0) / 1024 / 1024).toFixed(2) + ' MiB';
+  $('mediaStorage').textContent = storage
+    ? '知乎临时文件：' + size(storage.temporary.bytes) + (storage.temporary.partial ? '（部分统计）' : '')
+      + '；DSH 共享聊天附件：' + (storage.attachments.error ? '暂不可统计' : size(storage.attachments.bytes)) + (storage.attachments.partial ? '（部分统计）' : '')
+      + '。正常处理后清理临时文件；启动和读图时清理超过 24 小时的遗留工作目录。共享附件仍可能被历史引用，不自动删除。'
+      + (storage.temporary.error ? ' 临时清理提示：' + storage.temporary.error : '')
+    : '当前服务尚未报告图片存储占用。';
   $('sessions').value = (s.settings.allowedSessionIds || []).join('\n');
   $('upvote').checked = s.settings.upvote?.enabled === true;
   if (!$('profileUrl').value) $('profileUrl').value = s.activityWatch.profileUrl || s.ownerWatch.profileUrl || '';

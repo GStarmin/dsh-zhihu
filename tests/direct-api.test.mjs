@@ -35,7 +35,7 @@ async function fixture(work) {
       },
     };
   } };
-  const reader = makeZhihuActivityReader({ stateDir: dir, requestFactory, voteConfirmation: { sleep: async () => {}, autoReconcile: false }, browserType: { launch: async () => { launches++; throw new Error('must not launch'); } }, interactionPolicy: () => ({ enabled, accountProfile: actor }) });
+  const reader = makeZhihuActivityReader({ stateDir: dir, requestFactory, imageLoader: async sources => ({ images: sources.map(x => ({ ...x, loaded: false })), imageContent: [], imagePage: { total: sources.length, loaded: 0 } }), voteConfirmation: { sleep: async () => {}, autoReconcile: false }, browserType: { launch: async () => { launches++; throw new Error('must not launch'); } }, interactionPolicy: () => ({ enabled, accountProfile: actor }) });
   const change = values => {
     if ('readBackValues' in values) readBackValues = [...values.readBackValues]; if ('readBackStatus' in values) readBackStatus = values.readBackStatus;
     if ('html' in values) html = values.html; if ('voting' in values) voting = values.voting;

@@ -1,0 +1,70 @@
+{
+  "name": "dsh-zhihu",
+  "version": "0.1.0",
+  "description": "知乎推荐、正文、动态追踪与读后赞同：独立 DSH / MCP 插件，提供 qq-bridge 接入适配器。",
+  "type": "module",
+  "license": "MIT",
+  "author": "GStarmin",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GStarmin/dsh-zhihu.git"
+  },
+  "homepage": "https://github.com/GStarmin/dsh-zhihu#readme",
+  "bugs": {
+    "url": "https://github.com/GStarmin/dsh-zhihu/issues"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./runtime": "./lib/runtime.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-zhihu": "./bin/cli.js",
+    "dsh-zhihu-mcp": "./bin/mcp.js",
+    "dsh-zhihu-qq-mcp": "./bin/qq-mcp.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "public",
+    "examples",
+    "docs",
+    "cordis.patch.yml",
+    "README.md",
+    "KNOWN_ISSUES.md",
+    "THIRD_PARTY_NOTICES.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check:publish": "node scripts/check-publish.mjs",
+    "start": "node bin/cli.js serve",
+    "test:ui": "node scripts/test-ui.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "playwright-core": "1.64.1",
+    "zod": "4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

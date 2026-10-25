@@ -1,0 +1,142 @@
+# dsh-zhihu
+
+让 DeepSeek Harness（DSH）或 MCP 客户端使用自己的知乎账号：看推荐、读回答正文、追踪指定用户的创作与公开点赞，读后决定是否赞同。提供独立管理页和 qq-bridge 适配器。
+
+**状态：0.1.0，实验版本。已知知乎网页可能返回 HTTP 403 / 40362；本插件不能保证解除网站限制。** 受阻后会暂停网页访问，管理页显示原因，禁止自动反复尝试。请先读 [已知问题](KNOWN_ISSUES.md)。
+
+本项目从一套 qq-bridge 的本地扩展抽取。核心代码不依赖 qq-bridge、SnowLuma、QQ 账号或原作者的机器路径。没有内置任何账号、Cookie、API Key、聊天记录或自动任务。
+
+## 能做什么
+
+| 能力 | 范围 |
+| --- | --- |
+| 官方热榜、搜索、问题推荐 | 知乎开放平台 Access Secret；结果通常为摘要 |
+| 首页推荐与正文 | 自己账号的正常网页登录；回答和文章的实际可见正文 |
+| 读后赞同 | 默认关闭；仅绑定的机器人账号；完整读取后签发短时凭证，正文发生变化则须重读 |
+| 用户已有创作及新创作 | 目标用户独立授权自己的 Access Secret，不能拿机器人密钥代替 |
+| 公开点赞 / 赞同动态 | 用机器人账号读目标主页可见卡片，首次建立旧记录基线，分享成功后确认去重 |
+| 关注与收藏 | 官方接口的关注名单和公开收藏；**没有关注动态流或私密收藏** |
+| DSH / MCP | 原生 `zhihu_browse`、通用 MCP、带桥接实时鉴权的 QQ MCP |
+
+网页内容是外部资料，不是操作指令。没有发帖、评论、私信、关注、取关、取消赞同或想法点赞功能。不自动创建浏览或发消息任务。
+
+## 安装与启动
+
+需要 Node.js **22.13+**。Linux 请用普通用户运行，保留 Chromium 沙箱；系统需有可用的 Chromium。`playwright-core` 不会自动下载浏览器。
+
+```sh
+git clone https://github.com/GStarmin/dsh-zhihu.git
+cd dsh-zhihu
+npm ci --ignore-scripts
+node bin/cli.js init
+node bin/cli.js serve
+```
+
+管理页默认在 <http://127.0.0.1:3120/>。另开终端运行下面的命令显示管理令牌，在管理页填写：
+
+```sh
+node bin/cli.js admin-token
+```
+
+Linux 默认找 `/usr/bin/chromium`；macOS 找 Google Chrome / Chromium。其他位置用 `DSH_ZHIHU_CHROMIUM` 指定，包括 Windows 的浏览器完整路径。
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `DSH_ZHIHU_HOME` | 数据目录；默认 `${DSH_HOME 或 ~/.dsh}/zhihu` |
+| `DSH_ZHIHU_CHROMIUM` | Chromium / Chrome 可执行文件 |
+| `DSH_ZHIHU_PORT` | 管理及工具服务端口，默认 3120 |
+| `DSH_ZHIHU_URL` | MCP / 原生插件连接的服务地址；只接受本机 HTTP 根地址 |
+
+自定义目录时，**服务端、DSH 进程、MCP 进程都必须使用相同的 `DSH_ZHIHU_HOME`**。变更端口后也要为客户端设置相应的 `DSH_ZHIHU_URL`。一个数据目录只启动一个后台服务。
+
+VPS 上只监听回环。可在自己的电脑建立隧道访问管理页：
+
+```sh
+ssh -N -L 3120:127.0.0.1:3120 YOUR_VPS
+```
+
+不要把管理令牌放进 URL 或公开仓库。管理页的口令、机器人官方授权、用户自己的授权和网页登录状态各自独立。
+
+## 配置账号
+
+1. 在管理页填写机器人的知乎开放平台 Access Secret，连接官方 API。该密钥不等于网页登录。
+2. 点击「获取网页登录二维码」，用给机器人准备的账号扫码，在知乎 App 确认。遇到网站限制时停止，不提供验证码代解或绕过。
+3. 需要留意某人的公开点赞时，在「追踪目标」填写他的完整知乎主页并保存；用机器人账号读取的是该主页实际可见内容。
+4. 需要读取目标用户自己的创作时，另填**他本人的** Access Secret，并确认归属。代码验证凭据有效，但不能代替本人确认密钥和主页属于同一账号。
+5. 需要自主赞同时再勾选授权，绑定的只能是已扫码登录的账号。切换登录账号后，旧赞同授权不会自动适配新账号，须由管理端重新确认。
+
+管理页不回显已保存的 Access Secret 或 Cookie。浏览器受阻后的「确认后恢复网页访问」仅解除程序暂停，不向知乎发送请求，也不证明知乎限制已解除；下一次仍被拒会重新暂停。
+
+## 接入 DSH 原生工具
+
+先保持上述独立服务运行，再把此包安装到你使用的 DSH profile：
+
+```sh
+dsh plugin --profile YOUR_PROFILE add "link:/absolute/path/dsh-zhihu"
+```
+
+包提供 `cordis.patch.yml` 和 `dsh.bundle` 元数据，注册 `zhihu_browse`。需要 `@deepseek-ai/dsh-tools >=0.2.1-rc.2 <0.3.0`；仓库 `npm ci` 会安装用于验证的工具依赖。按照你使用的 DSH 版本重新加载 profile。
+
+在管理页「工具授权」中加入该聊天的**真实 DSH 会话 ID**。默认列表为空，任何原生会话都不能执行工具。身份来自 `exec.agent.session.id`，模型参数不能冒充别的会话。修改列表即时生效。
+
+DSH 的原生工具接口已通过实际依赖包的注册及身份测试。不同 DSH 版本、profile 装配和第三方预设仍需自行验证；本版本不自动修改其权限守卫。
+
+## 接入通用 MCP
+
+在 MCP 客户端配置中启动标准输入输出服务，例如：
+
+```json
+{
+  "mcpServers": {
+    "zhihu": {
+      "command": "node",
+      "args": ["/absolute/path/dsh-zhihu/bin/mcp.js"],
+      "env": {
+        "DSH_ZHIHU_HOME": "/absolute/path/to/private/zhihu-data",
+        "DSH_ZHIHU_URL": "http://127.0.0.1:3120"
+      }
+    }
+  }
+}
+```
+
+MCP 只暴露一个 `zhihu_browse` 工具。它从指定数据目录读取独立的 agent token，不能调用管理接口。只给你信任的 MCP 客户端配置这个目录；原生会话白名单不用于识别通用 MCP 客户端。
+
+## 接入 qq-bridge
+
+见 [QQ 接入说明](docs/QQ_BRIDGE.md)。适配器暴露同样参数形式的 `qq_zhihu_browse(key, token, action, ...)`，每次调用都向桥接核对当前管理员私聊的真实会话、暂停和授权状态。
+
+**适配器要求桥接已有 `/api/socialV2/autonomy-auth` 实时鉴权接口。未经该扩展的原版仓库不保证直接兼容，缺少接口时会拒绝放行。** QQ 预设通常还需要精确放行新工具名。不要同时给同一会话加载重复的同名知乎工具。
+
+现有线上 QQ 部署不因本仓库发布而迁移、重启或解除知乎暂停状态。本仓库没有包含整份私人桥接配置，也没有自动部署 QQ / SnowLuma 的脚本。
+
+## 日常调用和自主浏览
+
+```text
+action=status
+action=home_feed
+action=read_content, contentUrl=从推荐中选出的具体回答链接
+action=vote_up, readToken=完整阅读返回的短时凭证, reason=认同的具体观点
+```
+
+赞同凭证 15 分钟有效，正文须完整且不超过本次 30000 字符范围。必须是相同登录会话、同一正文指纹、绑定账号且管理端仍启用。已有赞同不取消；知乎 HTTP 成功且页面显示已赞同才记入审计。
+
+`owner_contents` 按 `limit/offset` 看目标用户已授权的已有创作；`owner_updates` 仅看新创作和待分享。`owner_activity_recent` 翻的是当前已加载点赞窗口，`Paging.IsEnd` **不表示全部历史结束**。
+
+插件不负责发 QQ 或存人格记忆，读取结果进入调用它的同一个 DSH / MCP 会话；发消息和记忆由原有 QQ 工具与记忆插件负责。只有实际分享成功后才调用 `owner_updates_ack(urls)` / `owner_activity_ack(activityIds)`；发送失败不确认。
+
+想定时浏览，可在现有 DSH 会话用原生计划创建一次持久化任务，参考 [浏览任务提示](examples/BROWSING_PROMPT.md)。阅读、赞同和分享分别决定；有兴趣、有收获才行动。该频率不是降低风控的保证，也不限制另外的手动命令和部署测试。
+
+## 测试与发布检查
+
+```sh
+npm test
+npm run check:publish
+npm pack --dry-run
+```
+
+自动测试使用模拟网站数据，验证会话保存、访问拒绝识别与暂停、账号隔离、原生会话授权、真实本机 HTTP 和 stdio MCP，不对知乎执行点赞或其他写操作。
+
+本项目源自的 QQ 部署曾成功读取推荐和正文、提交回答赞同；之后也真实遇到 40362。本包的独立组装经过离线验证，**没有以新安装包再次向知乎提交真实赞同**。文章赞同与不同网站页面版本的兼容性仍需要更多验证，详见已知问题。
+
+MIT；来源与第三方说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

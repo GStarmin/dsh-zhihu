@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { chromium } from 'playwright-core';
+import { createRuntime } from '../lib/runtime.js';
+import { startServer } from '../lib/server.js';
+import { token, chromiumPath } from '../lib/paths.js';
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zhihu-ui-'));
+const runtime = createRuntime({ stateDir: dir, fetchImpl: async () => new Response('{"Code":0,"Data":{}}') });
+const app = await startServer({ runtime, port: 0 });
+const browser = await chromium.launch({ executablePath: chromiumPath(), headless: true });
+try {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } }), errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.route('**/*', route => new URL(route.request().url()).origin === app.url ? route.continue() : route.abort());
+  await page.goto(app.url);
+  await page.locator('#adminToken').fill(token(dir, 'admin')); await page.locator('#login').click();
+  await page.waitForFunction(() => document.getElementById('message').textContent.includes('已连接'));
+  assert.equal(await page.locator('#adminToken').inputValue(), '');
+  await page.locator('#botSecret').fill('fixture-public-api-secret'); await page.locator('#saveBot').click();
+  await page.waitForFunction(() => document.getElementById('status').textContent.includes('"officialApi": true'));
+  assert.equal(await page.locator('#botSecret').inputValue(), '');
+  await page.locator('#sessions').fill('session-fixture'); await page.locator('#saveSettings').click();
+  await page.waitForFunction(() => document.getElementById('message').textContent === '操作成功');
+  await page.locator('#upvote').check(); await page.locator('#saveSettings').click();
+  await page.waitForFunction(() => document.getElementById('message').textContent.includes('先扫码'));
+  assert.equal(await page.locator('#upvote').isChecked(), false);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  assert.deepEqual(errors, []);
+  await page.locator('#sessions').scrollIntoViewIfNeeded();
+  if (process.env.DSH_ZHIHU_UI_SCREENSHOT) await page.screenshot({ path: process.env.DSH_ZHIHU_UI_SCREENSHOT });
+  console.log('PASS independent manager: mobile layout, secret clearing, API setup, session grant and disabled votes before login');
+} finally { await browser.close(); await app.close(); fs.rmSync(dir, { recursive: true, force: true }); }

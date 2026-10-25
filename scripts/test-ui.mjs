@@ -18,6 +18,8 @@ try {
   await page.locator('#adminToken').fill(token(dir, 'admin')); await page.locator('#login').click();
   await page.waitForFunction(() => document.getElementById('message').textContent.includes('已连接'));
   assert.equal(await page.locator('#adminToken').inputValue(), '');
+  const statusText = await page.locator('#status').innerText();
+  assert.ok(statusText.includes('websiteApiAccess') && statusText.includes('browserAccess') && statusText.includes('website-api'));
   await page.locator('#botSecret').fill('fixture-public-api-secret'); await page.locator('#saveBot').click();
   await page.waitForFunction(() => document.getElementById('status').textContent.includes('"officialApi": true'));
   assert.equal(await page.locator('#botSecret').inputValue(), '');

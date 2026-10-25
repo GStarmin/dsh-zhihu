@@ -30,7 +30,7 @@ test('a denial survives restart, blocks all browser entry points before launch, 
   fs.writeFileSync(path.join(stateDir, 'zhihu-activity-login.json'), JSON.stringify({ saved: true, sessionId: 'fixture', account: { profileUrl: 'https://www.zhihu.com/people/bot-fixture' } }));
   fs.writeFileSync(path.join(stateDir, 'zhihu-activity-session.json'), '{"cookies":[],"origins":[]}');
   // An invalid executable proves denied reads never try to launch Chromium.
-  const reader = makeZhihuActivityReader({ stateDir, executablePath: '/this-browser-must-not-launch' });
+  const reader = makeZhihuActivityReader({ stateDir, executablePath: '/this-browser-must-not-launch', directApi: false });
   assert.equal((await reader.status()).access.blocked, true);
   await assert.rejects(reader.self.feed(), /拒绝访问/);
   await assert.rejects(reader.self.read('https://www.zhihu.com/question/1/answer/2'), /拒绝访问/);
@@ -72,7 +72,7 @@ test('the actual reader persists refreshed sessions, records a blocked response,
       evaluateAll: async () => [{ title: '测试推荐', links: [{ url: 'https://www.zhihu.com/question/1/answer/2' }] }],
     } };
   const context = { routeWebSocket: async () => {}, route: async () => {}, newPage: async () => page, storageState: async () => state };
-  const reader = makeZhihuActivityReader({ stateDir, browserType: { launch: async () => { launches++; return { newContext: async () => context, close: async () => { closes++; } }; } } });
+  const reader = makeZhihuActivityReader({ stateDir, directApi: false, browserType: { launch: async () => { launches++; return { newContext: async () => context, close: async () => { closes++; } }; } } });
   assert.equal((await reader.self.feed()).items.length, 1);
   assert.deepEqual(JSON.parse(fs.readFileSync(sessionFile)), state);
   blocked = true;

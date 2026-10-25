@@ -14,14 +14,14 @@ async function fixture(work) {
   const meta = { saved: true, sessionId: 'fixture-a', account: { profileUrl: actor } };
   savePrivateJson(metaFile, meta);
   savePrivateJson(sessionFile, { cookies: [{ name: '_xsrf', value: 'fixture-xsrf', domain: '.zhihu.com' }], origins: [{ origin: 'https://www.zhihu.com', localStorage: [{ name: 'fixture', value: 'preserved' }] }] });
-  let html = '<p>完整的正文 &amp; 观点。</p>', voting = 0, enabled = true, account = 'bot-fixture', truncated = false, status = 200, throwPost = false, confirm = true, beforePost, afterRead, launches = 0;
+  let html = '<p>完整的正文 &amp; 观点。</p>', voting = 0, enabled = true, account = 'bot-fixture', truncated = false, status = 200, throwPost = false, confirm = true, beforePost, afterRead, readBackValues = [], readBackStatus = null, launches = 0;
   const calls = [];
   const requestFactory = { newContext: async options => {
     assert.equal(options.maxRedirects, 0);
     return {
       storageState: async () => ({ cookies: [...options.storageState.cookies, { name: 'fixture-refresh', value: 'refreshed', domain: '.zhihu.com' }], origins: [] }), dispose: async () => {},
       fetch: async (raw, init) => {
-        const u = new URL(raw); calls.push({ path: u.pathname, method: init.method, data: init.data });
+        const u = new URL(raw); const isReadBack = u.searchParams.get('include') === 'relationship.voting,question.title'; calls.push({ path: u.pathname, method: init.method, data: init.data });
         assert.equal(u.origin, 'https://www.zhihu.com'); assert.equal(init.maxRetries, 0); assert.equal(init.maxRedirects, 0);
         let data;
         if (init.method === 'POST') {
@@ -29,20 +29,22 @@ async function fixture(work) {
           assert.deepEqual(init.data, { type: 'up' }); if (confirm) voting = 1; data = { success: true };
         } else if (u.pathname === '/api/v4/me') data = { url_token: account };
         else if (u.pathname.includes('/feed/')) data = { data: [{ target: { type: 'answer', id: '2', url: 'https://api.zhihu.com/answers/2', question: { id: '1', title: '测试问题' }, excerpt: '摘要' } }] };
-        else { data = { type: 'answer', id: '2', url: 'https://www.zhihu.com/api/v4/answers/2', question: { title: '测试问题' }, content: html, relationship: { voting }, content_need_truncated: truncated }; afterRead?.(); }
-        return { status: () => status, headers: () => ({}), text: async () => JSON.stringify(status === 403 ? { error: { code: 40362, message: 'secret must not be reflected' } } : data) };
+        else { data = { type: 'answer', id: '2', url: 'https://www.zhihu.com/api/v4/answers/2', question: { title: '测试问题' }, content: html, relationship: { voting: isReadBack && readBackValues.length ? readBackValues.shift() : voting }, content_need_truncated: truncated }; afterRead?.(); }
+        const actualStatus = isReadBack && readBackStatus !== null ? readBackStatus : status;
+        return { status: () => actualStatus, headers: () => ({}), text: async () => JSON.stringify(actualStatus === 403 ? { error: { code: 40362, message: 'secret must not be reflected' } } : data) };
       },
     };
   } };
-  const reader = makeZhihuActivityReader({ stateDir: dir, requestFactory, browserType: { launch: async () => { launches++; throw new Error('must not launch'); } }, interactionPolicy: () => ({ enabled, accountProfile: actor }) });
+  const reader = makeZhihuActivityReader({ stateDir: dir, requestFactory, voteConfirmation: { sleep: async () => {}, autoReconcile: false }, browserType: { launch: async () => { launches++; throw new Error('must not launch'); } }, interactionPolicy: () => ({ enabled, accountProfile: actor }) });
   const change = values => {
+    if ('readBackValues' in values) readBackValues = [...values.readBackValues]; if ('readBackStatus' in values) readBackStatus = values.readBackStatus;
     if ('html' in values) html = values.html; if ('voting' in values) voting = values.voting;
     if ('enabled' in values) enabled = values.enabled; if ('account' in values) account = values.account;
     if ('truncated' in values) truncated = values.truncated; if ('status' in values) status = values.status;
     if ('throwPost' in values) throwPost = values.throwPost; if ('confirm' in values) confirm = values.confirm;
     if ('afterRead' in values) afterRead = values.afterRead; if ('beforePost' in values) beforePost = values.beforePost;
   };
-  try { await work({ reader, dir, calls, change, meta, metaFile, sessionFile, launches: () => launches }); }
+  try { await work({ reader, dir, calls, change, meta, metaFile, sessionFile, requestFactory, launches: () => launches }); }
   finally { await reader.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 }
 test('HTML is returned as text and exact large answer/question IDs survive recommendation extraction', () => {
@@ -103,14 +105,76 @@ test('API denial is persisted separately, never falls back to the browser, and n
 }));
 test('an interrupted POST is not retried, and a pending attempt blocks future resubmission even with a fresh proof', () => fixture(async ({ reader, change, calls }) => {
   const read = await reader.self.read(url); change({ throwPost: true });
-  await assert.rejects(reader.self.upvote({ readToken: read.readToken, reason: '同意' }), /结果未确认/);
+  const unknown = await reader.self.upvote({ readToken: read.readToken, reason: '同意' });
+  assert.equal(unknown.pending, true); assert.equal(unknown.submitted, null); assert.equal(unknown.postAccepted, null);
   assert.equal(calls.filter(x => x.method === 'POST').length, 1);
   change({ throwPost: false }); const again = await reader.self.read(url);
-  await assert.rejects(reader.self.upvote({ readToken: again.readToken, reason: '同意' }), /上次赞同结果尚未确认/);
+  const repeat = await reader.self.upvote({ readToken: again.readToken, reason: '同意' }); assert.equal(repeat.pending, true); assert.equal(repeat.submitted, false);
   assert.equal(calls.filter(x => x.method === 'POST').length, 1);
 }));
 test('HTTP success without confirmed voting state is not reported as a successful upvote', () => fixture(async ({ reader, change, dir }) => {
   change({ confirm: false }); const read = await reader.self.read(url);
-  await assert.rejects(reader.self.upvote({ readToken: read.readToken, reason: '同意' }), /接口状态未确认/);
+  const result = await reader.self.upvote({ readToken: read.readToken, reason: '同意' });
+  assert.equal(result.confirmed, false); assert.equal(result.pending, true); assert.equal(result.submitted, true);
+  assert.equal(fs.existsSync(path.join(dir, 'zhihu-self-upvotes.json')), false);
+}));
+
+
+test('eventually visible upvote is confirmed by delayed GETs, with a single POST and a single audit row', () => fixture(async ({ reader, calls, change, dir }) => {
+  change({ readBackValues: [0, 0, 1] });
+  const read = await reader.self.read(url), result = await reader.self.upvote({ readToken: read.readToken, reason: '认同完整正文' });
+  assert.equal(result.confirmed, true); assert.equal(result.submitted, true);
+  assert.equal(calls.filter(x => x.method === 'POST').length, 1);
+  const receipt = JSON.parse(fs.readFileSync(path.join(dir, 'zhihu-api-vote-attempts.json')))[0];
+  assert.deepEqual(receipt.checks.map(x => x.voting), [0, 0, 1]); assert.equal(receipt.reason, '认同完整正文');
+  assert.equal(receipt.status, 'confirmed');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'zhihu-self-upvotes.json'))).length, 1);
+}));
+test('pending writes are repaired by read-only reconciliation and repeated checks never duplicate the audit', () => fixture(async ({ reader, change, calls, dir }) => {
+  change({ confirm: false });
+  const read = await reader.self.read(url), pending = await reader.self.upvote({ readToken: read.readToken, reason: '保存的原始理由' });
+  assert.equal(pending.pending, true); assert.equal((await reader.status()).voteChecks.pendingCount, 1);
+  change({ voting: 1 });
+  assert.deepEqual(await reader.reconcileVotes({ force: true }), { checked: 1, confirmed: 1 });
+  assert.equal((await reader.status()).voteChecks.pendingCount, 0);
+  assert.deepEqual(await reader.reconcileVotes({ force: true }), { checked: 0, confirmed: 0 });
+  assert.equal(calls.filter(x => x.method === 'POST').length, 1);
+  const audit = JSON.parse(fs.readFileSync(path.join(dir, 'zhihu-self-upvotes.json')));
+  assert.equal(audit.length, 1); assert.equal(audit[0].reason, '保存的原始理由'); assert.ok(audit[0].confirmedAt);
+}));
+test('restarting the reader automatically checks legacy pending receipts without ever sending a POST', () => fixture(async ({ reader, requestFactory, change, calls, dir }) => {
+  await reader.close(); change({ voting: 1 });
+  savePrivateJson(path.join(dir, 'zhihu-api-vote-attempts.json'), [{ url, actor, at: 12345, status: 'pending' }]);
+  const restarted = makeZhihuActivityReader({ stateDir: dir, requestFactory, voteConfirmation: { reconcileInitialDelayMs: 5 } });
+  try {
+    for (let i = 0; i < 30 && (await restarted.status()).voteChecks.pendingCount; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal((await restarted.status()).voteChecks.pendingCount, 0);
+    const audit = JSON.parse(fs.readFileSync(path.join(dir, 'zhihu-self-upvotes.json')));
+    assert.equal(audit.length, 1); assert.equal(audit[0].at, 12345); assert.equal(audit[0].recovered, true);
+    assert.match(audit[0].reason, /原始赞同理由未保存/); assert.equal(calls.some(x => x.method === 'POST'), false);
+  } finally { await restarted.close(); }
+}));
+test('a rejected read-back stops confirmation immediately and pauses subsequent background checks', () => fixture(async ({ reader, change, calls }) => {
+  change({ readBackStatus: 403 }); const read = await reader.self.read(url);
+  await assert.rejects(reader.self.upvote({ readToken: read.readToken, reason: '认同' }), /40362/);
+  assert.equal((await reader.status()).apiAccess.blocked, true);
+  const count = calls.length;
+  assert.equal((await reader.reconcileVotes({ force: true })).paused, true); assert.equal(calls.length, count);
+  assert.equal(calls.filter(x => x.method === 'POST').length, 1);
+}));
+test('bounded background checks stop with a review flag and never resubmit an unresolved vote', () => fixture(async ({ reader, change, calls }) => {
+  change({ confirm: false }); const read = await reader.self.read(url);
+  await reader.self.upvote({ readToken: read.readToken, reason: '认同' });
+  for (let i = 0; i < 3; i++) await reader.reconcileVotes({ force: true });
+  const status = (await reader.status()).voteChecks;
+  assert.equal(status.pendingCount, 1); assert.equal(status.needsReviewCount, 1);
+  assert.equal((await reader.reconcileVotes()).checked, 0); assert.equal(calls.filter(x => x.method === 'POST').length, 1);
+}));
+test('reconciliation cannot use a different login session to resolve a bound pending write', () => fixture(async ({ reader, change, dir, meta, metaFile, calls }) => {
+  change({ confirm: false }); const read = await reader.self.read(url);
+  await reader.self.upvote({ readToken: read.readToken, reason: '认同' });
+  savePrivateJson(metaFile, { ...meta, sessionId: 'replacement-session' });
+  const count = calls.length, result = await reader.reconcileVotes({ force: true });
+  assert.equal(result.needsReview, true); assert.equal(calls.length, count);
   assert.equal(fs.existsSync(path.join(dir, 'zhihu-self-upvotes.json')), false);
 }));

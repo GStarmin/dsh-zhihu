@@ -178,3 +178,21 @@ test('reconciliation cannot use a different login session to resolve a bound pen
   assert.equal(result.needsReview, true); assert.equal(calls.length, count);
   assert.equal(fs.existsSync(path.join(dir, 'zhihu-self-upvotes.json')), false);
 }));
+
+
+test('a raw HTML CDN rotation between reading and voting no longer falsely reports changed content', () => fixture(async ({ reader, change, calls }) => {
+  const file = 'v2-' + 'd'.repeat(32) + '_r.jpg';
+  change({ html: `<p>同一段观点。</p><img src="https://pica.zhimg.com/${file}?source=a">` });
+  const read = await reader.self.read(url);
+  change({ html: `<p>同一段观点。</p><img src="https://picx.zhimg.com/${file}?source=b">` });
+  const result = await reader.self.upvote({ readToken: read.readToken, reason: '认同读过的观点' });
+  assert.equal(result.confirmed, true); assert.equal(calls.filter(x => x.method === 'POST').length, 1);
+}));
+test('short answer links also support read-only pending reconciliation', () => fixture(async ({ reader, dir, change, calls }) => {
+  const short = 'https://www.zhihu.com/answer/2';
+  savePrivateJson(path.join(dir, 'zhihu-api-vote-attempts.json'), [{ url: short, actor, at: 12345, status: 'pending' }]);
+  change({ voting: 1 });
+  assert.equal((await reader.reconcileVotes({ force: true })).confirmed, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'zhihu-self-upvotes.json')))[0].url, short);
+  assert.equal(calls.some(x => x.method === 'POST'), false);
+}));

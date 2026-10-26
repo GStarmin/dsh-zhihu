@@ -60,7 +60,7 @@ test('recommendations and complete answer reading use HTTP with no Chromium, pre
   const saved = JSON.parse(fs.readFileSync(sessionFile));
   assert.ok(saved.cookies.some(c => c.name === 'fixture-refresh')); assert.equal(saved.origins[0].localStorage[0].value, 'preserved');
   assert.equal(fs.statSync(sessionFile).mode & 0o777, 0o600);
-  assert.equal((await reader.status()).access.blocked, true); assert.equal((await reader.status()).apiAccess.blocked, false);
+  assert.equal((await reader.status()).access.retired, true); assert.equal((await reader.status()).apiAccess.blocked, false);
 }));
 test('new upvote requires a read proof, rechecks body, sends exactly one POST and confirms state before audit', () => fixture(async ({ reader, dir, calls, launches }) => {
   await assert.rejects(reader.self.upvote({ readToken: 'invented', reason: '同意' }), /先用/);
@@ -98,10 +98,10 @@ test('wrong HTTP account and session replacement stop before a vote and never ov
 test('API denial is persisted separately, never falls back to the browser, and never retries on later calls', () => fixture(async ({ reader, dir, change, calls, launches }) => {
   change({ status: 403 }); await assert.rejects(reader.self.feed(), /40362/);
   const count = calls.length;
-  await assert.rejects(reader.self.read(url), /恢复前不会再次访问知乎接口/);
+  await assert.rejects(reader.self.read(url), /恢复前不会再次访问知乎/);
   assert.equal(calls.length, count); assert.equal(launches(), 0);
-  assert.equal((await reader.status()).apiAccess.blocked, true); assert.equal((await reader.status()).access.blocked, false);
-  assert.equal(fs.statSync(path.join(dir, 'zhihu-api-access.json')).mode & 0o777, 0o600);
+  assert.equal((await reader.status()).accessScopes.account.blocked, true); assert.equal((await reader.status()).access.retired, true);
+  assert.equal(fs.statSync(path.join(dir, 'zhihu-account-api-access.json')).mode & 0o777, 0o600);
 }));
 test('an interrupted POST is not retried, and a pending attempt blocks future resubmission even with a fresh proof', () => fixture(async ({ reader, change, calls }) => {
   const read = await reader.self.read(url); change({ throwPost: true });

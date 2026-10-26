@@ -15,7 +15,7 @@
 | 文章正文 | 仍使用登录浏览器读取实际可见内容 |
 | 读后赞同 | 回答直接 POST 接口并再次 GET 核对赞同状态；文章仍点击浏览器；默认关闭，仅绑定账号，完整阅读凭证和正文指纹仍必需 |
 | 用户已有创作及新创作 | 目标用户独立授权自己的 Access Secret，不能拿机器人密钥代替 |
-| 公开点赞 / 赞同动态 | 用机器人账号读目标主页可见卡片，首次建立旧记录基线，分享成功后确认去重 |
+| 公开点赞 / 赞同动态 | 用机器人账号通过动态 JSON 接口读取并分页，保留旧去重记录，首次建立旧记录基线，分享成功后确认去重 |
 | 关注与收藏 | 官方接口的关注名单和公开收藏；**没有关注动态流或私密收藏** |
 | DSH / MCP | 原生 `zhihu_browse`、通用 MCP、带桥接实时鉴权的 QQ MCP |
 
@@ -23,7 +23,7 @@
 
 ## 安装与启动
 
-需要 Node.js **22.13+**。Linux 请用普通用户运行，保留 Chromium 沙箱；系统需有可用的 Chromium。`playwright-core` 不会自动下载浏览器。
+需要 Node.js **22.13+**。知乎运行时使用原生 HTTP、Cookie 会话和本地二维码生成，不需要安装或启动 Chromium / Playwright。读取大图需要系统 ffmpeg。
 
 ```sh
 git clone https://github.com/GStarmin/dsh-zhihu.git
@@ -39,12 +39,11 @@ node bin/cli.js serve
 node bin/cli.js admin-token
 ```
 
-Linux 默认找 `/usr/bin/chromium`；macOS 找 Google Chrome / Chromium。其他位置用 `DSH_ZHIHU_CHROMIUM` 指定，包括 Windows 的浏览器完整路径。
+运行时没有浏览器路径配置；`playwright-core` 仅是管理页 UI 测试的开发依赖，不随 `npm ci --omit=dev` 安装。
 
 | 环境变量 | 用途 |
 | --- | --- |
 | `DSH_ZHIHU_HOME` | 数据目录；默认 `${DSH_HOME 或 ~/.dsh}/zhihu` |
-| `DSH_ZHIHU_CHROMIUM` | Chromium / Chrome 可执行文件 |
 | `DSH_ZHIHU_PORT` | 管理及工具服务端口，默认 3120 |
 | `DSH_ZHIHU_URL` | MCP / 原生插件连接的服务地址；只接受本机 HTTP 根地址 |
 
@@ -66,7 +65,7 @@ ssh -N -L 3120:127.0.0.1:3120 YOUR_VPS
 4. 需要读取目标用户自己的创作时，另填**他本人的** Access Secret，并确认归属。代码验证凭据有效，但不能代替本人确认密钥和主页属于同一账号。
 5. 需要自主赞同时再勾选授权，绑定的只能是已扫码登录的账号。切换登录账号后，旧赞同授权不会自动适配新账号，须由管理端重新确认。
 
-管理页不回显已保存的 Access Secret 或 Cookie。接口状态 `apiAccess` 与浏览器状态 `access` 分开显示；旧的浏览器暂停不等于接口也不可用。直接接口同样检查真实登录账号，成功后保存刷新 Cookie 并保留浏览器 localStorage。「确认后恢复访问」解除两条通道的程序暂停，不向知乎发送请求，也不证明知乎限制已解除；下一次仍被拒会重新暂停。
+管理页不回显已保存的 Access Secret 或 Cookie。扫码登录、推荐、回答、文章及点赞动态全部使用 HTTP。`web.accessScopes` 分别报告账号、推荐、回答、文章、动态和登录状态；某一内容功能被拒仅暂停该功能，账号身份失效则阻止全部已登录操作。保留已有 Cookie、账号绑定及旧动态去重记录；历史浏览器暂停文件不删除，也不再控制 HTTP 功能。`access.retired=true` 是旧字段兼容标记。「确认后恢复访问」只解除程序暂停，不代表知乎限制已经解除，不进行验证码代解或浏览器回退。
 
 ## 接入 DSH 原生工具
 
@@ -130,7 +129,7 @@ MCP（含 QQ 适配器）返回标准图片块；DSH 原生插件通过 `ctx.att
 
 **DSH 共享聊天附件仍会随新图片增长**，可能被历史会话引用；插件只显示占用，不删除它们，不把临时目录清理描述为全局附件回收。图片按现有 DSH 内容地址存储；视频下载、抽帧和音频转写尚未接入。
 
-`owner_contents` 按 `limit/offset` 看目标用户已授权的已有创作；`owner_updates` 仅看新创作和待分享。`owner_activity_recent` 翻的是当前已加载点赞窗口，`Paging.IsEnd` **不表示全部历史结束**。
+`owner_contents` 按 `limit/offset` 看目标用户已授权的已有创作；`owner_updates` 仅看新创作和待分享。`owner_activity_recent` 翻的是接口本次最多五页的已加载点赞窗口；接口返回真实游标时逐页读取，拒绝跨域/跨用户游标及循环。`sourcePaging` 报告上游页数、是否结束与仍有更多；工具 `Paging.IsEnd` **不表示全部历史结束**。
 
 插件不负责发 QQ 或存人格记忆，读取结果进入调用它的同一个 DSH / MCP 会话；发消息和记忆由原有 QQ 工具与记忆插件负责。只有实际分享成功后才调用 `owner_updates_ack(urls)` / `owner_activity_ack(activityIds)`；发送失败不确认。
 

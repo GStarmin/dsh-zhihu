@@ -1,6 +1,6 @@
 {
   "name": "dsh-zhihu",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "知乎推荐、正文、动态追踪与读后赞同：独立 DSH / MCP 插件，提供 qq-bridge 接入适配器。",
   "type": "module",
   "license": "MIT",
@@ -48,7 +48,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "playwright-core": "1.64.1",
+    "qrcode": "1.5.4",
+    "tough-cookie": "6.0.2",
     "zod": "4.4.3"
   },
   "peerDependencies": {
@@ -60,7 +61,8 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "playwright-core": "1.64.1"
   },
   "dsh": {
     "bundle": {

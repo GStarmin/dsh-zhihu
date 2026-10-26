@@ -3,21 +3,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { normalizeActivityRows, assertActivityPageReadable } from '../lib/core/zhihu-activity-reader.js';
+import { normalizeApiActivities } from '../lib/core/zhihu-activity-reader.js';
+import { nextActivityPath } from '../lib/core/zhihu-activity-api.js';
 import { makeZhihuActivityWatch } from '../lib/core/zhihu-activity-watch.js';
 const profileUrl = 'https://www.zhihu.com/people/owner-fixture';
 const accountProfile = 'https://www.zhihu.com/people/bot-fixture';
-const row = (id, time = '2026-10-25 10:00') => ({ meta: '赞同了回答\n' + time, time,
-  title: '旧文章也可以是刚点赞', summary: '公开摘要', links: [{ url: `https://www.zhihu.com/question/1/answer/${id}`, title: '来源' }] });
-const event = id => normalizeActivityRows([row(id)], profileUrl)[0];
-test('readability follows rendered profile and actual challenge UI, not the initial HTTP status', () => {
-  const loaded = { httpStatus: 403, pathname: '/people/owner-fixture', profileVisible: true, cardCount: 14, empty: false, chromeText: '关注 推荐 热榜' };
-  assert.doesNotThrow(() => assertActivityPageReadable(loaded));
-  assert.doesNotThrow(() => assertActivityPageReadable({ ...loaded, cardCount: 0, empty: true }));
-  assert.throws(() => assertActivityPageReadable({ ...loaded, profileVisible: false, cardCount: 0 }), /HTTP 403/);
-  assert.throws(() => assertActivityPageReadable({ ...loaded, chromeText: '请完成安全验证' }), /验证控件/);
-  assert.throws(() => assertActivityPageReadable({ ...loaded, httpStatus: 200, pathname: '/signin' }), /重新登录/);
-  assert.throws(() => assertActivityPageReadable({ ...loaded, httpStatus: 200, cardCount: 0 }), /未加载/);
+const row = (id, time = 1792884000) => ({ actor: { url_token: 'owner-fixture' }, verb: 'MEMBER_VOTEUP_ANSWER', created_time: time,
+  target: { type: 'answer', id: String(id), question: { id: '1', title: '旧文章也可以是刚点赞' }, excerpt: '公开摘要' } });
+const normalize = rows => normalizeApiActivities({ data: rows, paging: { is_end: true } }, profileUrl);
+const event = id => normalize([row(id)])[0];
+test('malformed empty data is not reported as an empty activity history', () => {
+  assert.throws(() => normalizeApiActivities({data:[]},profileUrl), /分页/);
+  assert.deepEqual(normalize([]),[]);
+  for(const link of ['https://evil.test/api/v3/moments/owner-fixture/activities?offset=1','https://www.zhihu.com/api/v3/moments/another/activities?offset=1','https://www.zhihu.com/api/v3/moments/owner-fixture/activities?redirect=evil']) assert.throws(()=>nextActivityPath(link,profileUrl));
 });
 async function fixture(fn) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zhihu-activity-'));
@@ -34,12 +32,12 @@ async function fixture(fn) {
   try { await fn({ watch, stateDir, write, options, setItems: x => { items = x; }, setFail: x => { fail = x; }, setGate: x => { gate = x; } }); }
   finally { fs.rmSync(stateDir, { recursive: true, force: true }); }
 }
-test('like detection uses action metadata, stable IDs and real source links', () => {
-  const first = normalizeActivityRows([row(1), row(1, '刚刚'), { ...row(2), meta: '回答了问题' }, { ...row(3), meta: '关注了问题' }], profileUrl);
-  assert.equal(first.length, 1); assert.equal(first[0].action, '赞同'); assert.equal(first[0].url, row(1).links[0].url);
-  assert.equal(first[0].id, normalizeActivityRows([row(1, '10分钟前')], profileUrl)[0].id);
-  assert.equal(normalizeActivityRows([{ ...row(1), links: [{ url: 'https://evil.test/question/1/answer/1' }] }], profileUrl).length, 0);
-  assert.equal(normalizeActivityRows([{ ...row(1), meta: '发布了想法，获得了100个点赞' }], profileUrl).length, 0);
+test('like detection uses exact action verbs, actor identity and stable IDs across transport migration', () => {
+  const first=normalize([row(1),row(1,1792884100),{...row(2),verb:'ANSWER_CREATE'},{...row(3),verb:'QUESTION_FOLLOW'}]);
+  assert.equal(first.length,1);assert.equal(first[0].action,'赞同');assert.equal(first[0].url,'https://www.zhihu.com/question/1/answer/1');
+  assert.equal(first[0].id,normalize([row(1,1792884200)])[0].id);
+  assert.throws(()=>normalize([{...row(1),actor:{url_token:'another'}}]),/身份不符/);
+  assert.equal(normalize([{...row(1),verb:'PIN_CREATE',action_text:'发布了想法，获得100个点赞'}]).length,0);
 });
 test('baseline excludes old likes; newly discovered likes on old content remain pending until actual send acknowledgement', () => fixture(async ({ watch, setItems, options }) => {
   const baseline = await watch.check(); assert.equal(baseline.initialized, true); assert.equal(baseline.items.length, 0);
@@ -83,9 +81,18 @@ test('pause and target changes revoke an in-flight check without overwriting sta
   write('zhihu-owner-watch.json', { profileUrl: 'https://www.zhihu.com/people/changed-fixture' });
   await assert.rejects(watch.check(), /配置已变化/);
 }));
-test('missing browser login fails clearly and cannot acknowledge old content', () => fixture(async ({ watch, stateDir }) => {
+test('missing HTTP login fails clearly and cannot acknowledge old content', () => fixture(async ({ watch, stateDir }) => {
   await watch.check(); fs.rmSync(path.join(stateDir, 'zhihu-activity-login.json'));
   assert.equal(watch.status().ready, false);
   await assert.rejects(watch.check(), /扫码登录/);
   await assert.rejects(watch.acknowledge([event(1).id]), /账号或配置/);
+}));
+
+test('expanding the HTTP window does not announce older likes as new; recent likes on old content remain pending',()=>fixture(async({options,setItems,stateDir})=>{
+  let clock=100000;
+  const watch=makeZhihuActivityWatch({...options,now:()=>clock,sourceRead:async()=>({...await options.sourceRead(),transport:'website-api'})});
+  await watch.check();clock=120000;
+  setItems([{...event(2),actedAt:90000},{...event(3),actedAt:110000},event(1)]);
+  const result=await watch.check();assert.deepEqual(result.items.map(x=>x.id),[event(3).id]);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(stateDir,'zhihu-activity-watch.json'))).seen.includes(event(2).id));
 }));

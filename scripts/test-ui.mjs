@@ -5,11 +5,11 @@ import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { createRuntime } from '../lib/runtime.js';
 import { startServer } from '../lib/server.js';
-import { token, chromiumPath } from '../lib/paths.js';
+import { token } from '../lib/paths.js';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zhihu-ui-'));
 const runtime = createRuntime({ stateDir: dir, fetchImpl: async () => new Response('{"Code":0,"Data":{}}') });
 const app = await startServer({ runtime, port: 0 });
-const browser = await chromium.launch({ executablePath: chromiumPath(), headless: true });
+const browser = await chromium.launch({ executablePath: process.env.DSH_ZHIHU_TEST_CHROMIUM || (process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/chromium'), headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } }), errors = [];
   page.on('pageerror', e => errors.push(e.message));
@@ -19,7 +19,7 @@ try {
   await page.waitForFunction(() => document.getElementById('message').textContent.includes('已连接'));
   assert.equal(await page.locator('#adminToken').inputValue(), '');
   const statusText = await page.locator('#status').innerText();
-  assert.ok(statusText.includes('websiteApiAccess') && statusText.includes('browserAccess') && statusText.includes('website-api'));
+  assert.ok(statusText.includes('websiteApiAccess') && statusText.includes('accessScopes') && statusText.includes('browserRequired') && statusText.includes('website-api'));
   const storageText = await page.locator('#mediaStorage').innerText();
   assert.match(storageText, /知乎临时文件/); assert.match(storageText, /共享聊天附件/); assert.match(storageText, /24 小时/); assert.match(storageText, /不自动删除/);
   await page.locator('#botSecret').fill('fixture-public-api-secret'); await page.locator('#saveBot').click();

@@ -21,24 +21,17 @@ async function fixture(work) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zhihu-access-'));
   try { await work(stateDir); } finally { fs.rmSync(stateDir, { recursive: true, force: true }); }
 }
-test('a denial survives restart, blocks all browser entry points before launch, and requires operator recovery', () => fixture(async stateDir => {
-  const gate = makeZhihuAccessGate({ stateDir, now: () => 1000 });
-  gate.record(new Error('ordinary page timeout'));
-  assert.equal(gate.status().blocked, false);
-  gate.record(new ZhihuAccessError('ACCESS_DENIED', '知乎拒绝访问', { httpStatus: 403, businessCode: 40362 }));
-  assert.throws(() => makeZhihuAccessGate({ stateDir }).assertAllowed(), /拒绝访问/);
-  fs.writeFileSync(path.join(stateDir, 'zhihu-activity-login.json'), JSON.stringify({ saved: true, sessionId: 'fixture', account: { profileUrl: 'https://www.zhihu.com/people/bot-fixture' } }));
-  fs.writeFileSync(path.join(stateDir, 'zhihu-activity-session.json'), '{"cookies":[],"origins":[]}');
-  // An invalid executable proves denied reads never try to launch Chromium.
-  const reader = makeZhihuActivityReader({ stateDir, executablePath: '/this-browser-must-not-launch', directApi: false });
-  assert.equal((await reader.status()).access.blocked, true);
-  await assert.rejects(reader.self.feed(), /拒绝访问/);
-  await assert.rejects(reader.self.read('https://www.zhihu.com/question/1/answer/2'), /拒绝访问/);
-  await assert.rejects(reader.read('https://www.zhihu.com/people/owner-fixture'), /拒绝访问/);
-  assert.equal((await reader.resumeAccess()).access.blocked, false);
-  assert.equal(makeZhihuAccessGate({ stateDir }).status().blocked, false);
-  assert.equal(fs.statSync(path.join(stateDir, 'zhihu-web-access.json')).mode & 0o777, 0o600);
-  await reader.close();
+test('retired browser state is preserved but cannot pause HTTP operations; active scopes persist independently',()=>fixture(async stateDir=>{
+  const old=makeZhihuAccessGate({stateDir});old.record(new ZhihuAccessError('ACCESS_DENIED','old browser denial'));
+  const account=makeZhihuAccessGate({stateDir,fileName:'zhihu-account-api-access.json'});account.record(new ZhihuAccessError('ACCESS_DENIED','account denied'));
+  fs.writeFileSync(path.join(stateDir,'zhihu-activity-login.json'),JSON.stringify({saved:true,sessionId:'fixture',account:{profileUrl:'https://www.zhihu.com/people/bot-fixture'}}));
+  fs.writeFileSync(path.join(stateDir,'zhihu-activity-session.json'),'{}');
+  let requests=0;const reader=makeZhihuActivityReader({stateDir,requestFactory:{newContext:async()=>{requests++;throw new Error('must not request')}}});
+  try{
+    await assert.rejects(reader.self.feed(),/account denied/);await assert.rejects(reader.read('https://www.zhihu.com/people/owner-fixture'),/account denied/);assert.equal(requests,0);
+    assert.equal((await reader.status()).browserRequired,false);assert.equal((await reader.status()).access.retired,true);
+    await reader.resumeAccess();assert.equal(account.status().blocked,false);assert.equal(old.status().blocked,true);
+  }finally{await reader.close()}
 }));
 
 test('session refresh is private, preserves the login identity, and cannot resurrect a replaced or removed login', () => fixture(async stateDir => {
@@ -58,28 +51,4 @@ test('session refresh is private, preserves the login identity, and cannot resur
   assert.equal(await pending, false);
   assert.deepEqual(JSON.parse(fs.readFileSync(sessionFile)), state);
   fs.rmSync(metaFile); assert.equal(await persistZhihuSession(options), false);
-}));
-
-test('the actual reader persists refreshed sessions, records a blocked response, closes the browser and does not retry it', () => fixture(async stateDir => {
-  fs.writeFileSync(path.join(stateDir, 'zhihu-activity-login.json'), JSON.stringify({ saved: true, sessionId: 'fixture', account: { profileUrl: 'https://www.zhihu.com/people/bot-fixture' } }));
-  const sessionFile = path.join(stateDir, 'zhihu-activity-session.json');
-  fs.writeFileSync(sessionFile, '{"cookies":[],"origins":[]}');
-  let blocked = false, launches = 0, closes = 0;
-  const state = { cookies: [{ name: 'fixture-refresh', value: 'new-fixture-value' }], origins: [] };
-  const page = { goto: async () => ({ status: () => blocked ? 403 : 200 }), url: () => 'https://www.zhihu.com/',
-    locator: selector => selector === 'body' ? { innerText: async () => '{"error":{"code":40362}}' } : {
-      first: () => ({ waitFor: async () => { if (blocked) throw new Error('not visible'); } }),
-      evaluateAll: async () => [{ title: '测试推荐', links: [{ url: 'https://www.zhihu.com/question/1/answer/2' }] }],
-    } };
-  const context = { routeWebSocket: async () => {}, route: async () => {}, newPage: async () => page, storageState: async () => state };
-  const reader = makeZhihuActivityReader({ stateDir, directApi: false, browserType: { launch: async () => { launches++; return { newContext: async () => context, close: async () => { closes++; } }; } } });
-  assert.equal((await reader.self.feed()).items.length, 1);
-  assert.deepEqual(JSON.parse(fs.readFileSync(sessionFile)), state);
-  blocked = true;
-  await assert.rejects(reader.self.feed(), /40362/);
-  assert.equal((await reader.status()).access.code, 'ACCESS_DENIED');
-  assert.equal(closes, 1);
-  await assert.rejects(reader.self.feed(), /恢复前不会再次访问/);
-  assert.equal(launches, 1);
-  await reader.close();
 }));

@@ -7,7 +7,7 @@ async function api(path, data) {
 async function refresh() {
   clearTimeout(poll);
   const s = await api('/api/status'), web = s.web || {};
-  $('status').textContent = JSON.stringify({ officialApi: s.configured, webAccount: web.account, savedLogin: web.saved, loginState: web.loginState, loginError: web.error, websiteApiAccess: web.apiAccess, browserAccess: web.access, transports: web.transports, voteChecks: web.voteChecks, mediaStorage: web.mediaStorage, ownerWatch: s.ownerWatch, activityWatch: s.activityWatch }, null, 2);
+  $('status').textContent = JSON.stringify({ officialApi: s.configured, webAccount: web.account, savedLogin: web.saved, loginState: web.loginState, loginError: web.error, websiteApiAccess: web.apiAccess, accessScopes: web.accessScopes, browserRequired: web.browserRequired, transports: web.transports, voteChecks: web.voteChecks, mediaStorage: web.mediaStorage, ownerWatch: s.ownerWatch, activityWatch: s.activityWatch }, null, 2);
   const storage = web.mediaStorage;
   const size = bytes => (Number(bytes || 0) / 1024 / 1024).toFixed(2) + ' MiB';
   $('mediaStorage').textContent = storage
